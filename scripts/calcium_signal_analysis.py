@@ -1,20 +1,13 @@
 #!/Users/gwk/anaconda3/envs/gcamp_analysis/bin/python
 
-import os
 import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-#import mat73
-from scipy.ndimage import percentile_filter
-from functools import lru_cache
 from utils.analyze_responsive import full_neuron_event_analysis, compute_population_activity_stats, compute_dff, extract_signal_by_stimulus
 from utils.analyze_responsive import plot_combined_rasters_sorted,sort_raster_by_responsiveness, process_dataframe, import_2p_data
 from pathlib import Path
-#from collections import defaultdict
-#from oasis.functions import deconvolve
 
 ## Define global variables here 
-stim_type = 10
+## This can only take a value of 0 to 16
+stim_type = 2
 
 def main():
     save_dir = Path('/Users/gwk/Desktop/Bioinformatics/two-photon-calcium-zebrafish/data/25_07_25')
