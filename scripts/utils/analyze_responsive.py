@@ -16,6 +16,7 @@ def full_neuron_event_analysis(
     df_spikes,
     df_deconv,
     df_spike_response,
+    save_dir,
     output_csv='responsive_neuron_event_summary.csv',
     frame_duration_sec=30,
     baseline_mode='static',
@@ -106,6 +107,7 @@ def full_neuron_event_analysis(
 
     df_summary = pd.DataFrame(all_summaries)
     df_summary.to_csv(output_csv, index=False)
+    df_summary.to_csv(os.path.join(save_dir, output_csv), index=False)
     print(f"✅ Saved full event summary to: {output_csv}")
 
     if visualize and not df_summary.empty:
@@ -252,7 +254,7 @@ def plot_combined_rasters_sorted(results, stim_frame, save_dir):
     save_path = os.path.join(save_dir, "combined_sorted_raster_plots.png")
     plt.savefig(save_path)
     plt.close()
-    print(f"✅ Sorted raster plot saved to {save_path}")
+    print(f"✅ Sorted raster plot saved to {save_dir}")
 
 def extract_signal_by_stimulus(data, stim=1):
     try:

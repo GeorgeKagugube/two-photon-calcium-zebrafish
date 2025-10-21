@@ -7,10 +7,11 @@ from pathlib import Path
 
 ## Define global variables here 
 ## This can only take a value of 0 to 16
-stim_type = 2
+# Stim types, loom:12, loom-dimming:18, lmBar:11, rmBar:13, okr:[10,14,16,20,23]
+stim_type = 12 # 0, 11, 13 and 16
 
 def main():
-    save_dir = Path('/Users/gwk/Desktop/Bioinformatics/two-photon-calcium-zebrafish/data/25_07_25')
+    save_dir = Path('/Users/gwk/Desktop/Bioinformatics/two-photon-calcium-zebrafish/data/loom/')
 
     file_paths = {
         'wt_unexposed1': Path("/Users/gwk/Desktop/CalciumImaging/Wt_Unexposed/f1/gmrxanat.mat"),
@@ -37,7 +38,7 @@ def main():
 
         finally:
             stim_frame = 11
-            pre, post = 10, 20
+            pre, post = 10, 30
             results = []
 
             for name, dfdata in zip(names, dataframes):
@@ -45,18 +46,20 @@ def main():
                 results.append(result)
                 plot_combined_rasters_sorted(results, stim_frame, save_dir)
                 compute_population_activity_stats(results, save_dir)
+
 '''
-            # Call after you have: df_spikes, df_deconv, responsive_neurons
-            df_summary = full_neuron_event_analysis(
-                df_spikes=df_spikes,
-                df_deconv=df_deconv,
-                df_spike_response=df_spike_response,
-                output_csv='neuron_event_summary.csv',
-                frame_duration_sec=30,
-                baseline_mode='dynamic',  # or 'static'
-                dynamic_window=10,
-                visualize=True
-            )'''
+                # Call after you have: df_spikes, df_deconv, responsive_neurons
+                df_summary = full_neuron_event_analysis(
+                    df_spikes=result['df_spikes'],
+                    df_deconv=result['df_deconv'],
+                    df_spike_response=result['df_spikes_resp'],
+                    save_dir = save_dir,
+                    output_csv='neuron_event_summary.csv',
+                    frame_duration_sec=30,
+                    baseline_mode='dynamic',  # or 'static'
+                    dynamic_window=10,
+                    visualize=True
+                )'''
 
 if __name__ == "__main__":
     main()
