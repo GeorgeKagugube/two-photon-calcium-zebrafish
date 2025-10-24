@@ -134,3 +134,7 @@ res.aov <- aov(mean_peak_amp ~ Group + class, data = df)
 summary(res.aov)
 
 TukeyHSD(res.aov)
+
+
+dff <- read.csv('./wt/network_reorg_corr_during.csv')
+head(dff)
