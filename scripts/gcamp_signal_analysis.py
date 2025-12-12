@@ -10,7 +10,22 @@ from raster_from_spikes import raster_with_optional_dff
 
 
 ## Import the dataframe for further analysis here
-dff_df = pd.read_csv('../Data/smoothed_roi_mutExposed4.csv', index_col=0)
+## Path to raw flourance data files
+#  path_to_files = Path('/Users/gwk/Desktop/CalciumImaging/extractedROI/loomROI')
+#dff_df = pd.read_csv('../Data/smoothed_roi_mutExposed4.csv', index_col=0)
+# Unexposed wILD tyPE 
+#dff_df = pd.read_csv('/Users/gwk/Desktop/CalciumImaging/extractedROI/loomROI/unexposed_wt.csv', index_col=0)
+#dff_df = pd.read_csv('/Users/gwk/Desktop/CalciumImaging/extractedROI/loomROI/unexposed_wt2.csv', index_col=0)
+
+# ## Exposed wild type
+#dff_df = pd.read_csv('/Users/gwk/Desktop/CalciumImaging/extractedROI/loomROI/exposed_wt.csv', index_col=0)
+
+# ## Exposed mutants
+#dff_df = pd.read_csv('/Users/gwk/Desktop/CalciumImaging/extractedROI/loomROI/exposed_mut1.csv', index_col=0)
+#dff_df = pd.read_csv('/Users/gwk/Desktop/CalciumImaging/extractedROI/loomROI/exposed_mut2.csv', index_col=0)
+#dff_df = pd.read_csv('/Users/gwk/Desktop/CalciumImaging/extractedROI/loomROI/exposed_mut3.csv', index_col=0)
+dff_df = pd.read_csv('/Users/gwk/Desktop/CalciumImaging/extractedROI/loomROI/exposed_mut4.csv', index_col=0)
+
 dff_df = dff_df.transpose()
 
 experiment = 'dff_mutExposed4'
@@ -25,7 +40,7 @@ S_df, C_df, B_df, G_df = deconvolve_oasis_dataframe(
     method="ar1",     # or "ar2"
     g=None,           # let OASIS estimate AR coefficient per neuron
     s_min=0.0,        # increase for stronger sparsity on spikes
-    penalty=1.0,      # tune based on SNR (higher => sparser)
+    penalty=1,      # tune based on SNR (higher => sparser)
     optimize_g=True,
     n_jobs=-1,        # parallel (requires joblib); set 1 to disable
     show_progress=True
@@ -62,7 +77,7 @@ per_roi, per_fish = summarise_activity_by_window(
     group="Mutant + Mn",
     # windows can be customised, default uses (0–11, 12–35, 36–108)
     save_prefix="./out_mn_pipeline",
-    thr=0.0,   # raise slightly (e.g., 0.01) if you want to suppress tiny OASIS spikes
+    thr=0.3,   # raise slightly (e.g., 0.01) if you want to suppress tiny OASIS spikes
     name = f'{experiment}'
 )
 

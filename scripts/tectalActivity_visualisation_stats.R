@@ -113,7 +113,7 @@ barPlotting <- function(df, x, y, barr = 'upper_errorbar'){
 head(df_wtUnexp1)
 head(df_mut1)
 
-# # Read in the Unexposed Mn data here (This is all the tonic data)
+# # # Read in the Unexposed Mn data here (This is all the tonic data)
 df_wtUnexp1 <- genotype_group(df = read.csv("./wt/clearance_metrics_by_class_wt_exposed1.csv"),
                               genotype = 'WT', treatment = 'Unexposed')
 df_wtunexpo2 <- genotype_group(df = read.csv('./wt/clearance_metrics_by_class_wt_exposed2.csv'),
@@ -180,24 +180,24 @@ write.csv(cdataframe,
 attach(cdataframe)
 
 df <- cdataframe |>
-  filter(responsive == 'True') 
+  filter(class == 'during' & responsive == 'True') 
   
-df |>
-  group_by(Group) |>
-  summarise(avg = mean(mean_tail_auc_s, na.rm = T))
+# df |>
+#   group_by(Group) |>
+#   summarise(avg = mean(mean_tail_auc_s, na.rm = T))
 
-# Remove outliers from the dataset here, this is for the tonic dataset only
-df <- df |>
-  filter(mean_tail_auc_s > 0 & mean_tail_auc_s < 15)
+# # Remove outliers from the dataset here, this is for the tonic dataset only
+# df <- df |>
+#   filter(mean_tail_auc_s > 0 & mean_tail_auc_s < 15)
 df <- na.omit(df[((df < 10) & df > 0),])
-df <- df[df$mean_tail_auc_s < 15,]
+# df <- df[df$mean_tail_auc_s < 15,]
 ######################## Bargraph ##########################
-barPlotting(df, x = 'class', y = 'mean_tail_auc_s')
+barPlotting(df, x = 'Group', y = 'mean_tail_auc_s')
 
 ######################### Statistics ##############################
-stats <- df |>
-  filter(class == 'pre')
-res.aov <- aov(mean_tail_auc_s ~ Group, data = stats)
+# stats <- df |>
+#   filter(class == 'pre')
+res.aov <- aov(mean_downstroke_slope ~ Group, data = df)
 # Summary of the analysis
 summary(res.aov)
 
