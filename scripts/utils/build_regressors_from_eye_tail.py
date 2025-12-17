@@ -1,12 +1,10 @@
 import numpy as np
 import pandas as pd
-from typing import Optional
+from typing import Dict, List, Tuple, Optional, Iterable
+from sklearn.linear_model import ElasticNetCV
+from sklearn.preprocessing import StandardScaler
 
 ###=================================================================================================
-import numpy as np
-import pandas as pd
-
-
 def extract_eye_traces_from_dff(
     dff: dict,
     fs_imaging: float,
@@ -387,3 +385,392 @@ def build_regressors_from_eye_tail(
     )
 
     return regressors_df
+
+#### ================================================================================
+def build_vmv(
+    sensory_df: pd.DataFrame,
+    motor_coeffs_df: pd.DataFrame,
+    motor_cols: Optional[List[str]] = None,
+) -> pd.DataFrame:
+    """
+    Assemble the visuomotor vectors (VMVs) from sensory AUCs and motor coefficients.
+
+    Parameters
+    ----------
+    sensory_df : pd.DataFrame
+        Per-neuron sensory components, shape (n_neurons, n_sensory).
+        Index must be neuron IDs (e.g. 'neuron_id'), as returned by
+        compute_sensory_component().
+    motor_coeffs_df : pd.DataFrame
+        Per-neuron motor regression coefficients, shape (n_neurons, n_motor).
+        Index must be neuron IDs aligned with sensory_df.
+    motor_cols : list of str, optional
+        Columns from motor_coeffs_df to use (in order). If None, all columns
+        in motor_coeffs_df are used in their existing order.
+
+    Returns
+    -------
+    vmv_df : pd.DataFrame
+        Concatenated visuomotor vectors, shape (n_neurons_common, n_sensory + n_motor_used).
+        Rows: neuron IDs (intersection of indices of sensory_df and motor_coeffs_df)
+        Columns: [sensory columns..., motor columns...]
+    """
+    # Align neuron IDs by intersection of indices
+    common_ids = sensory_df.index.intersection(motor_coeffs_df.index)
+    if len(common_ids) == 0:
+        raise ValueError("No overlapping neuron IDs between sensory_df and motor_coeffs_df")
+
+    sensory_sub = sensory_df.loc[common_ids].copy()
+
+    if motor_cols is None:
+        motor_sub = motor_coeffs_df.loc[common_ids].copy()
+    else:
+        missing = set(motor_cols) - set(motor_coeffs_df.columns)
+        if missing:
+            raise ValueError(f"motor_coeffs_df is missing expected columns: {missing}")
+        motor_sub = motor_coeffs_df.loc[common_ids, motor_cols].copy()
+
+    # Concatenate along columns: sensory first, then motor
+    vmv_df = pd.concat([sensory_sub, motor_sub], axis=1)
+
+    return vmv_df
+
+
+def normalise_vmv_columns(
+    vmv_df: pd.DataFrame,
+    eps: float = 1e-12,
+) -> pd.DataFrame:
+    """
+    Normalise each VMV component (column) by its standard deviation across neurons.
+
+    This follows the paper's statement:
+      "Each component (column) was normalised across neurones by its standard
+       deviation before clustering."
+
+    Parameters
+    ----------
+    vmv_df : pd.DataFrame
+        Raw VMV matrix, shape (n_neurons, n_components).
+    eps : float
+        Small constant to avoid division by zero if a column has zero SD.
+
+    Returns
+    -------
+    vmv_norm_df : pd.DataFrame
+        Same shape as vmv_df, but each column divided by its SD.
+    """
+    # Population SD (ddof=0)
+    stds = vmv_df.std(axis=0, ddof=0)
+    stds_safe = stds.replace(0, eps)
+
+    vmv_norm_df = vmv_df / stds_safe
+
+    return vmv_norm_df
+
+
+def prepare_vmv_for_clustering(
+    sensory_df: pd.DataFrame,
+    motor_coeffs_df: pd.DataFrame,
+    motor_cols: Optional[List[str]] = None,
+) -> Tuple[pd.DataFrame, pd.DataFrame, np.ndarray]:
+    """
+    High-level wrapper: sensory + motor → raw VMV → SD-normalised VMV → NumPy matrix.
+
+    Parameters
+    ----------
+    sensory_df : pd.DataFrame
+        Per-neuron sensory AUCs, shape (n_neurons, n_sensory).
+    motor_coeffs_df : pd.DataFrame
+        Per-neuron motor β-coefficients, shape (n_neurons, n_motor).
+    motor_cols : list of str, optional
+        Subset / ordering of motor coefficient columns to use.
+        If None, all columns of motor_coeffs_df are used.
+
+    Returns
+    -------
+    vmv_df : pd.DataFrame
+        Raw VMV matrix (un-normalised), neurons × components.
+    vmv_norm_df : pd.DataFrame
+        Column-wise SD-normalised VMV matrix.
+    vmv_norm_matrix : np.ndarray
+        Same data as vmv_norm_df but as a NumPy array,
+        shape (n_neurons_common, n_components), ready for clustering.
+    """
+    vmv_df = build_vmv(sensory_df, motor_coeffs_df, motor_cols=motor_cols)
+    vmv_norm_df = normalise_vmv_columns(vmv_df)
+    vmv_norm_matrix = vmv_norm_df.values.astype(float)
+
+    return vmv_df, vmv_norm_df, vmv_norm_matrix
+
+def build_cirf_kernel(
+    fs: float,
+    tau_rise: float = 0.02,
+    tau_decay: float = 0.42,
+    duration_s: float = 5.0,
+) -> np.ndarray:
+    """
+    Build a discrete calcium impulse response function (CIRF) kernel:
+    fast rise, slow decay, bi-exponential, normalised to max=1.
+
+    Parameters
+    ----------
+    fs : float
+        Imaging sampling frequency (Hz).
+    tau_rise : float
+        Rise time constant (s).
+    tau_decay : float
+        Decay time constant (s).
+    duration_s : float
+        Total duration of the kernel (s).
+
+    Returns
+    -------
+    kernel : np.ndarray
+        1D array of length int(duration_s * fs) representing the CIRF.
+    """
+    n = int(duration_s * fs)
+    t = np.arange(n) / fs
+    kernel = (1.0 - np.exp(-t / tau_rise)) * np.exp(-t / tau_decay)
+    if kernel.max() > 0:
+        kernel = kernel / kernel.max()
+    return kernel
+
+
+def convolve_regressors_with_cirf(
+    regressors_df: pd.DataFrame,
+    cirf_kernel: np.ndarray,
+) -> pd.DataFrame:
+    """
+    Convolve each regressor with the CIRF kernel (causal) and trim to original length.
+
+    Parameters
+    ----------
+    regressors_df : pd.DataFrame
+        (n_timepoints, n_predictors) behavioural predictors.
+    cirf_kernel : np.ndarray
+        1D CIRF kernel.
+
+    Returns
+    -------
+    convolved_df : pd.DataFrame
+        Same shape as regressors_df, convolved and trimmed.
+    """
+    X = regressors_df.values
+    n_timepoints, n_pred = X.shape
+
+    convolved = np.zeros_like(X, dtype=float)
+    for j in range(n_pred):
+        conv_full = np.convolve(X[:, j], cirf_kernel, mode="full")
+        convolved[:, j] = conv_full[:n_timepoints]
+
+    return pd.DataFrame(
+        convolved,
+        index=regressors_df.index,
+        columns=regressors_df.columns,
+    )
+
+
+def apply_time_shift(
+    X: np.ndarray,
+    Y: np.ndarray,
+    lag_frames: int,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Apply a global time shift between design matrix X and response Y.
+
+    Positive lag_frames means behaviour leads calcium:
+    - drop first 'lag_frames' samples from X
+    - drop last 'lag_frames' samples from Y
+
+    Parameters
+    ----------
+    X : np.ndarray
+        Design matrix, shape (n_timepoints, n_predictors).
+    Y : np.ndarray
+        Calcium matrix, shape (n_neurons, n_timepoints).
+    lag_frames : int
+        Shift in frames (can be negative, zero, or positive).
+
+    Returns
+    -------
+    X_shifted : np.ndarray
+        Time-aligned design matrix, shape (n_samples, n_predictors).
+    Y_shifted : np.ndarray
+        Time-aligned calcium matrix, shape (n_neurons, n_samples).
+    """
+    n_neurons, n_t = Y.shape
+    n_t_X, _ = X.shape
+    if n_t_X != n_t:
+        raise ValueError("X and Y must have the same number of timepoints before shifting")
+
+    if lag_frames > 0:
+        # behaviour precedes calcium
+        X_shifted = X[lag_frames:, :]
+        Y_shifted = Y[:, :-lag_frames]
+    elif lag_frames < 0:
+        lag = -lag_frames
+        # calcium precedes behaviour (rarely what you want biologically)
+        X_shifted = X[:-lag, :]
+        Y_shifted = Y[:, lag:]
+    else:
+        X_shifted = X
+        Y_shifted = Y
+
+    return X_shifted, Y_shifted
+
+
+def fit_motor_regression_elastic_net(
+    F: np.ndarray,
+    regressors_df: pd.DataFrame,
+    fs: float,
+    lag_frames: int = 0,
+    neuron_ids: Optional[Sequence] = None,
+    use_cirf: bool = True,
+    cirf_params: Optional[Dict[str, Any]] = None,
+    l1_ratio_grid: Sequence[float] = (0.1, 0.5, 0.9),
+    alphas_grid: Sequence[float] = (1e-4, 1e-3, 1e-2, 1e-1, 1.0),
+    n_splits_cv: int = 10,
+    max_iter: int = 5000,
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Fit elastic-net regression models for each neuron, using
+    (optionally CIRF-convolved) motor regressors.
+
+    This function:
+      1) optionally convolves each regressor with a CIRF kernel,
+      2) applies a global lag between behaviour and calcium,
+      3) standardises all predictors (zero mean, unit variance),
+      4) fits ElasticNetCV per neuron,
+      5) returns β coefficients and per-neuron metrics.
+
+    Parameters
+    ----------
+    F : np.ndarray
+        Calcium activity, shape (n_neurons, n_timepoints).
+        Typically ΔF/F or z-scored traces.
+    regressors_df : pd.DataFrame
+        Motor regressors at imaging frame times, shape (n_timepoints, n_predictors).
+        Column names will be used as coefficient labels.
+    fs : float
+        Imaging sampling frequency (Hz).
+    lag_frames : int, optional
+        Global lag between behaviour and calcium (in frames).
+        Positive = behaviour leads calcium (most common).
+    neuron_ids : sequence, optional
+        Labels for neurons; if None, np.arange(n_neurons) is used.
+    use_cirf : bool, optional
+        If True, convolve regressors with a CIRF kernel before regression.
+    cirf_params : dict, optional
+        Parameters passed to build_cirf_kernel(fs, **cirf_params),
+        e.g. {"tau_rise": 0.02, "tau_decay": 0.42, "duration_s": 5.0}.
+    l1_ratio_grid : sequence of float, optional
+        Grid of l1_ratio values (0 = ridge-like, 1 = lasso-like).
+    alphas_grid : sequence of float, optional
+        Grid of alpha values for ElasticNetCV.
+    n_splits_cv : int, optional
+        Number of cross-validation folds.
+    max_iter : int, optional
+        Max iterations for ElasticNetCV.
+
+    Returns
+    -------
+    coeffs_df : pd.DataFrame
+        (n_neurons, n_predictors) regression coefficients (βs),
+        ready to be used as motor components of the VMV.
+    metrics_df : pd.DataFrame
+        (n_neurons, 3+2) with columns:
+          - 'alpha'     : chosen penalty strength
+          - 'l1_ratio'  : chosen L1/L2 mix
+          - 'r2'        : model R² on the fitted data
+          - 'n_samples' : number of timepoints used after lagging
+          - 'lag_frames': lag used
+    """
+    # ---- sanity checks ----
+    if F.ndim != 2:
+        raise ValueError("F must be 2D (n_neurons, n_timepoints)")
+    n_neurons, n_timepoints = F.shape
+
+    if regressors_df.shape[0] != n_timepoints:
+        raise ValueError(
+            f"regressors_df must have the same number of timepoints as F "
+            f"({regressors_df.shape[0]} vs {n_timepoints})"
+        )
+
+    if neuron_ids is None:
+        neuron_ids = np.arange(n_neurons)
+
+    # ---- 1) CIRF convolution (optional) ----
+    if use_cirf:
+        if cirf_params is None:
+            cirf_params = {}
+        cirf_kernel = build_cirf_kernel(fs, **cirf_params)
+        X_df = convolve_regressors_with_cirf(regressors_df, cirf_kernel)
+    else:
+        X_df = regressors_df.copy()
+
+    # ---- 2) Time shift between X and F ----
+    X = X_df.values
+    X_shifted, Y_shifted = apply_time_shift(X, F, lag_frames=lag_frames)
+    # X_shifted: (n_samples, n_predictors)
+    # Y_shifted: (n_neurons, n_samples)
+    n_samples, n_pred = X_shifted.shape
+
+    # ---- 3) Standardise predictors (zero mean, unit variance) ----
+    scaler = StandardScaler(with_mean=True, with_std=True)
+    X_shifted_std = scaler.fit_transform(X_shifted)
+
+    # ---- 4) Fit ElasticNetCV per neuron ----
+    coeffs = np.zeros((n_neurons, n_pred), dtype=float)
+    alphas_chosen = np.zeros(n_neurons, dtype=float)
+    l1_ratios_chosen = np.zeros(n_neurons, dtype=float)
+    r2_scores = np.zeros(n_neurons, dtype=float)
+
+    for i in range(n_neurons):
+        y = Y_shifted[i, :]
+        # Optional: mean-centre y
+        y = y - np.nanmean(y)
+
+        # Handle flat or all-NaN traces
+        if np.allclose(y, 0) or np.isnan(y).all():
+            coeffs[i, :] = 0.0
+            alphas_chosen[i] = np.nan
+            l1_ratios_chosen[i] = np.nan
+            r2_scores[i] = np.nan
+            continue
+
+        model = ElasticNetCV(
+            l1_ratio=list(l1_ratio_grid),
+            alphas=list(alphas_grid),
+            cv=n_splits_cv,
+            max_iter=max_iter,
+            n_jobs=None,
+        )
+        model.fit(X_shifted_std, y)
+
+        coeffs[i, :] = model.coef_
+        alphas_chosen[i] = model.alpha_
+        l1_ratios_chosen[i] = (
+            model.l1_ratio_ if np.isscalar(model.l1_ratio_) else float(model.l1_ratio_[0])
+        )
+        r2_scores[i] = model.score(X_shifted_std, y)
+
+    # ---- 5) Wrap in DataFrames ----
+    coeffs_df = pd.DataFrame(
+        coeffs,
+        index=pd.Index(neuron_ids, name="neuron_id"),
+        columns=X_df.columns,
+    )
+
+    metrics_df = pd.DataFrame(
+        {
+            "alpha": alphas_chosen,
+            "l1_ratio": l1_ratios_chosen,
+            "r2": r2_scores,
+            "n_samples": n_samples,
+            "lag_frames": lag_frames,
+        },
+        index=pd.Index(neuron_ids, name="neuron_id"),
+    )
+
+    return coeffs_df, metrics_df
+

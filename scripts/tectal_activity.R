@@ -44,6 +44,7 @@ library(gridExtra)
 library(tidyverse)
 library(ggpubr)
 library(patchwork)
+library(tidyplots)
 
 ## Load the data to be analysed here
 wtUnexpo1 <- genotype_group(read.csv('./dff_wtUnexposed1_roi_metrics_by_window.csv'),
@@ -89,6 +90,12 @@ dff <- cdataframe |>
 
 ## Plotting starts from here 
 barPlotting(dff, x = 'Group', y = 'median_IEI_s')
+
+dff |>
+  tidyplot(x = Group, y = auc_per_s, color = Group) |>
+  add_mean_bar(alpha = 0.4) |>
+  add_sem_errorbar() |>
+  add_data_points_beeswarm()
 
 ######################### Statistics ##############################
 stats <- dff |>

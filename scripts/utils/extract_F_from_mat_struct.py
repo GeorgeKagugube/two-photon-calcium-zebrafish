@@ -11,7 +11,6 @@ def _moving_average(x: np.ndarray, window: int) -> np.ndarray:
     kernel = np.ones(window, dtype=float) / float(window)
     return np.convolve(x, kernel, mode="same")
 
-
 def _moving_percentile(x: np.ndarray, window: int, percentile: float) -> np.ndarray:
     """
     1D adaptive baseline using a sliding percentile.
